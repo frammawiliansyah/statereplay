@@ -1,0 +1,5 @@
+# Normalize line endings — Biome enforces LF; Windows CI checks out with CRLF otherwise.
+* text=auto eol=lf
+
+# Windows scripts may keep CRLF
+*.{cmd,bat} text eol=crlf

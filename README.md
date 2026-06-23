@@ -3,7 +3,7 @@
 > Persist workflow state to a durable, append-only log and replay from the last step after a crash or restart.
 
 [![npm version](https://img.shields.io/npm/v/statereplay.svg)](https://www.npmjs.com/package/statereplay)
-[![CI](https://github.com/appsuitelabs/statereplay/actions/workflows/ci.yml/badge.svg)](https://github.com/appsuitelabs/statereplay/actions/workflows/ci.yml)
+[![CI](https://github.com/frammawiliansyah/statereplay/actions/workflows/ci.yml/badge.svg)](https://github.com/frammawiliansyah/statereplay/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/statereplay.svg)](./LICENSE)
 [![provenance](https://img.shields.io/badge/npm-provenance-blue)](https://docs.npmjs.com/generating-provenance-statements)
 

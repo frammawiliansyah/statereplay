@@ -18,13 +18,12 @@
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "https://github.com/appsuitelabs/statereplay.git"
+    "url": "https://github.com/frammawiliansyah/statereplay.git"
   },
-  "homepage": "https://github.com/appsuitelabs/statereplay#readme",
+  "homepage": "https://github.com/frammawiliansyah/statereplay#readme",
   "bugs": {
-    "url": "https://github.com/appsuitelabs/statereplay/issues"
+    "url": "https://github.com/frammawiliansyah/statereplay/issues"
   },
-  "funding": "https://github.com/sponsors/appsuitelabs",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -69,7 +68,7 @@
     "test:coverage": "vitest run --coverage",
     "bench": "node --expose-gc --import tsx bench/setState.bench.ts",
     "attw": "attw --pack",
-    "release": "npm run build && changeset publish --provenance",
+    "release": "npm run build && changeset publish",
     "prepublishOnly": "npm run lint && npm run typecheck && npm run test && npm run build && npm run attw"
   },
   "peerDependencies": {
