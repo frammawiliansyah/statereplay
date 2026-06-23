@@ -1,0 +1,24 @@
+# Source & tests are never published — only the built dist/ ships (see package.json "files").
+src/
+tests/
+examples/
+bench/
+docs/
+.github/
+
+# Config (not shipped on npm)
+*.config.ts
+tsconfig.json
+biome.json
+vitest.config.ts
+tsup.config.ts
+.editorconfig
+.nvmrc
+.npmignore
+lefthook.yml
+
+# Tooling / artifacts
+coverage/
+.claude/
+.serena/
+.headroom/

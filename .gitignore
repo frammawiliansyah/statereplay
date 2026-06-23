@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# npm pack / attw tarballs
+*.tgz
+
+# Test coverage
+coverage/
+
+# StateReplay runtime logs (created by examples/tests)
+.statereplay*/
+.transfer_logs/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+.cursor/
+
+# AI / agent tooling (local session state — never commit)
+.aider*
+.claude/
+.headroom/
+.serena/

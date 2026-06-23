@@ -1,0 +1,97 @@
+{
+  "name": "statereplay",
+  "version": "0.2.0",
+  "description": "Persist workflow state to a durable append-only log and replay from the last step after crash or restart.",
+  "keywords": [
+    "workflow",
+    "state",
+    "persistence",
+    "checkpoint",
+    "resume",
+    "crash-recovery",
+    "fsync",
+    "jsonl"
+  ],
+  "license": "MIT",
+  "author": "AppSuite Labs",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/appsuitelabs/statereplay.git"
+  },
+  "homepage": "https://github.com/appsuitelabs/statereplay#readme",
+  "bugs": {
+    "url": "https://github.com/appsuitelabs/statereplay/issues"
+  },
+  "funding": "https://github.com/sponsors/appsuitelabs",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "express": ["./dist/express/index.d.ts"]
+    }
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./express": {
+      "import": {
+        "types": "./dist/express/index.d.ts",
+        "default": "./dist/express/index.js"
+      },
+      "require": {
+        "types": "./dist/express/index.d.cts",
+        "default": "./dist/express/index.cjs"
+      }
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "bench": "node --expose-gc --import tsx bench/setState.bench.ts",
+    "attw": "attw --pack",
+    "release": "npm run build && changeset publish --provenance",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run test && npm run build && npm run attw"
+  },
+  "peerDependencies": {
+    "express": ">=4.18.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.4",
+    "@biomejs/biome": "^1.9.0",
+    "@changesets/cli": "^2.27.0",
+    "@types/express": "^4.17.25",
+    "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "express": "^4.22.2",
+    "mitata": "^1.0.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
