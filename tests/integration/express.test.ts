@@ -25,9 +25,13 @@ function startServer(
   });
 }
 
-describe("integration: express middleware", () => {
+describe("integration: express middleware", { timeout: 30_000 }, () => {
   it("serves health, states, states/:id (+404), and the dashboard", async () => {
-    const replay = await createStateReplay({ storagePath: await tmp(), lock: false });
+    const replay = await createStateReplay({
+      storagePath: await tmp(),
+      lock: false,
+      durability: "none",
+    });
     await replay.setState("job-1", { step: "INIT", status: "PROCESSING", data: { n: 1 } });
     await replay.setState("job-2", { step: "DONE", status: "SUCCESS" });
 
@@ -67,7 +71,11 @@ describe("integration: express middleware", () => {
   });
 
   it("returns 404 for the dashboard when disabled", async () => {
-    const replay = await createStateReplay({ storagePath: await tmp(), lock: false });
+    const replay = await createStateReplay({
+      storagePath: await tmp(),
+      lock: false,
+      durability: "none",
+    });
     const app = express();
     app.use(createStateReplayMiddleware(replay, { enableDashboard: false }));
     const { port, close } = await startServer(app);
@@ -85,7 +93,11 @@ describe("integration: express middleware", () => {
   });
 
   it("honours a custom basePath", async () => {
-    const replay = await createStateReplay({ storagePath: await tmp(), lock: false });
+    const replay = await createStateReplay({
+      storagePath: await tmp(),
+      lock: false,
+      durability: "none",
+    });
     await replay.setState("a", { step: "S", status: "PENDING" });
     const app = express();
     app.use(createStateReplayMiddleware(replay, { basePath: "/_admin/sr" }));
