@@ -108,7 +108,67 @@ describe("integration: express middleware", { timeout: 30_000 }, () => {
     // The default basePath is no longer mounted.
     const def = await fetch(`http://127.0.0.1:${port}/_statereplay/health`);
     expect(def.status).toBe(404);
+    await close();
+    await replay.close();
+  });
 
+  it("answers 400 (not 500) for a malformed percent-escape in :id", async () => {
+    const replay = await createStateReplay({
+      storagePath: await tmp(),
+      lock: false,
+      durability: "none",
+    });
+    const app = express();
+    app.use(createStateReplayMiddleware(replay));
+    const { port, close } = await startServer(app);
+    const res = await fetch(`http://127.0.0.1:${port}/_statereplay/states/%`);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid id encoding");
+    // No stack trace / filesystem paths leaked.
+    expect(JSON.stringify(body)).not.toContain("at ");
+    await close();
+    await replay.close();
+  });
+
+  it("bounds /states and reports the total", async () => {
+    const replay = await createStateReplay({
+      storagePath: await tmp(),
+      lock: false,
+      durability: "none",
+    });
+    for (let i = 0; i < 12; i++) {
+      await replay.setState(`job-${i}`, { step: "S", status: "PENDING" });
+    }
+    const app = express();
+    app.use(createStateReplayMiddleware(replay));
+    const { port, close } = await startServer(app);
+    const res = await fetch(`http://127.0.0.1:${port}/_statereplay/states?limit=5`);
+    const body = await res.json();
+    expect(Object.keys(body.states)).toHaveLength(5);
+    expect(body.total).toBe(12);
+    expect(body.returned).toBe(5);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    await close();
+    await replay.close();
+  });
+
+  it("does not capture a sibling route sharing the basePath prefix", async () => {
+    const replay = await createStateReplay({
+      storagePath: await tmp(),
+      lock: false,
+      durability: "none",
+    });
+    const app = express();
+    app.use(createStateReplayMiddleware(replay));
+    app.get("/_statereplay_admin/ping", (_req, res) => {
+      res.json({ pong: true });
+    });
+    const { port, close } = await startServer(app);
+    const res = await fetch(`http://127.0.0.1:${port}/_statereplay_admin/ping`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).pong).toBe(true);
     await close();
     await replay.close();
   });

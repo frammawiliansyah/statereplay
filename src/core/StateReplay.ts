@@ -135,7 +135,12 @@ export class StateReplay<TData = Record<string, unknown>> extends EventEmitter {
     if (this._ready) {
       return;
     }
-    this.initPromise ??= this.doInit();
+    // A failed init must not be cached: it would brick the instance, since the
+    // lock is released below and a retry could legitimately succeed.
+    this.initPromise ??= this.doInit().catch((err: unknown) => {
+      this.initPromise = undefined;
+      throw err;
+    });
     return this.initPromise;
   }
 
@@ -145,18 +150,26 @@ export class StateReplay<TData = Record<string, unknown>> extends EventEmitter {
     }
     await this.fileManager.ensureStorage();
     await this.fileManager.acquireLock();
-    if (this.encryptEnabled && this.options.secretKey !== undefined) {
-      const meta = await this.fileManager.getMeta();
-      this.encryptionKey = CryptoUtil.resolveKey(
-        this.options.secretKey,
-        Buffer.from(meta.kdfSalt, "base64"),
-      );
+    try {
+      if (this.encryptEnabled && this.options.secretKey !== undefined) {
+        const meta = await this.fileManager.getMeta();
+        this.encryptionKey = CryptoUtil.resolveKey(
+          this.options.secretKey,
+          Buffer.from(meta.kdfSalt, "base64"),
+        );
+      }
+      const start = Date.now();
+      await this.replay();
+      this.stats.lastReplayDurationMs = Date.now() - start;
+      this.stats.idCount = this.cache.size;
+      this.stats.logSizeBytes = await this.fileManager.byteSize();
+    } catch (err) {
+      // Release the lock we just took — otherwise a strict-mode replay failure
+      // leaves a live lockfile behind and no instance able to use it.
+      this.cache.clear();
+      await this.fileManager.close().catch(() => {});
+      throw err;
     }
-    const start = Date.now();
-    await this.replay();
-    this.stats.lastReplayDurationMs = Date.now() - start;
-    this.stats.idCount = this.cache.size;
-    this.stats.logSizeBytes = await this.fileManager.byteSize();
     this._ready = true;
     this.emit("ready");
   }
@@ -234,7 +247,11 @@ export class StateReplay<TData = Record<string, unknown>> extends EventEmitter {
   private buildEntry(id: string, payload: StatePayload<TData>): LogEntry<TData> {
     const ts = payload.timestamp ?? Date.now();
     if (this.encryptEnabled && this.encryptionKey !== undefined) {
-      const blob = CryptoUtil.encrypt(JSON.stringify(payload), this.encryptionKey);
+      const blob = CryptoUtil.encrypt(
+        JSON.stringify(payload),
+        this.encryptionKey,
+        CryptoUtil.aad(CURRENT_SCHEMA_VERSION, id, ts),
+      );
       return {
         v: CURRENT_SCHEMA_VERSION,
         id,
@@ -270,6 +287,23 @@ export class StateReplay<TData = Record<string, unknown>> extends EventEmitter {
     if (typeof parsed.id !== "string") {
       throw new StateReplayValidationError("Log entry is missing a string id");
     }
+    if (typeof parsed.ts !== "number") {
+      throw new StateReplayValidationError("Log entry is missing a numeric ts");
+    }
+    const decoded = this.decodePayload(parsed);
+    // Replay must hold the same bar as setState: a log entry that could never
+    // have been written through the public API is corrupt, not merely unusual.
+    this.validateId(decoded.id);
+    this.validatePayload(decoded.payload);
+    return decoded;
+  }
+
+  private decodePayload(parsed: Record<string, unknown>): {
+    id: string;
+    payload: StatePayload<TData>;
+  } {
+    const id = parsed.id as string;
+    const ts = parsed.ts as number;
     if (parsed.enc === true) {
       if (this.encryptionKey === undefined) {
         throw new StateReplayDecryptError(
@@ -281,13 +315,24 @@ export class StateReplay<TData = Record<string, unknown>> extends EventEmitter {
         tag: String(parsed.tag),
         data: String(parsed.data),
       };
-      const plaintext = CryptoUtil.decrypt(blob, this.encryptionKey);
-      return { id: parsed.id, payload: JSON.parse(plaintext) as StatePayload<TData> };
+      const plaintext = CryptoUtil.decrypt(
+        blob,
+        this.encryptionKey,
+        CryptoUtil.aad(CURRENT_SCHEMA_VERSION, id, ts),
+      );
+      return { id, payload: JSON.parse(plaintext) as StatePayload<TData> };
+    }
+    // Encrypted store, plaintext line: refuse the downgrade. Accepting it would
+    // let anyone with write access inject trusted state without the key.
+    if (this.encryptionKey !== undefined) {
+      throw new StateReplayDecryptError(
+        "Encountered a plaintext line in an encrypted log; refusing to trust it",
+      );
     }
     if (typeof parsed.payload !== "object" || parsed.payload === null) {
       throw new StateReplayValidationError("Log entry is missing a payload object");
     }
-    return { id: parsed.id, payload: parsed.payload as StatePayload<TData> };
+    return { id, payload: parsed.payload as StatePayload<TData> };
   }
 
   private handleCorruptLine(lineNumber: number, truncated: boolean, err: unknown): void {
@@ -342,6 +387,16 @@ export class StateReplay<TData = Record<string, unknown>> extends EventEmitter {
       JSON.stringify(payload);
     } catch (err) {
       throw new StateReplayValidationError("payload.data must be JSON-serializable", {
+        cause: err,
+      });
+    }
+    try {
+      // The cache stores a structured clone, so anything JSON tolerates but
+      // structuredClone rejects (functions, symbols) must fail here — before the
+      // line is made durable — or the log and the cache would diverge.
+      structuredClone(payload);
+    } catch (err) {
+      throw new StateReplayValidationError("payload must be structured-cloneable", {
         cause: err,
       });
     }

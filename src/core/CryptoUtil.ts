@@ -38,9 +38,23 @@ export class CryptoUtil {
     return scryptSync(secret, salt, KEY_BYTES);
   }
 
-  static encrypt(plaintext: string, key: Buffer): EncryptedBlob {
+  /**
+   * Associated data binds a ciphertext to the record that carries it. Without
+   * it, GCM only proves the payload is intact — not that it belongs here, so an
+   * attacker with file-write access could move a valid ciphertext under another
+   * `id` and it would decrypt cleanly. Authenticating `v|id|ts` makes that swap
+   * fail the tag check.
+   */
+  static aad(v: number, id: string, ts: number): Buffer {
+    return Buffer.from(`${v}|${id}|${ts}`, "utf8");
+  }
+
+  static encrypt(plaintext: string, key: Buffer, aad?: Buffer): EncryptedBlob {
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv(ALGORITHM, key, iv);
+    if (aad !== undefined) {
+      cipher.setAAD(aad);
+    }
     const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
     const tag = cipher.getAuthTag();
     return {
@@ -50,13 +64,16 @@ export class CryptoUtil {
     };
   }
 
-  static decrypt(blob: EncryptedBlob, key: Buffer): string {
+  static decrypt(blob: EncryptedBlob, key: Buffer, aad?: Buffer): string {
     try {
       const iv = Buffer.from(blob.iv, "base64");
       const tag = Buffer.from(blob.tag, "base64");
       const data = Buffer.from(blob.data, "base64");
       const decipher = createDecipheriv(ALGORITHM, key, iv);
       decipher.setAuthTag(tag);
+      if (aad !== undefined) {
+        decipher.setAAD(aad);
+      }
       const plaintext = Buffer.concat([decipher.update(data), decipher.final()]);
       return plaintext.toString("utf8");
     } catch (cause) {

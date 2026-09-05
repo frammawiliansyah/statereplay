@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createStateReplay } from "../../src/core/StateReplay.js";
 import { StateReplayLockError } from "../../src/core/errors.js";
@@ -40,5 +42,44 @@ describe("integration: advisory lock", () => {
     const b = await createStateReplay({ storagePath: dir, lock: false });
     await a.close();
     await b.close();
+  });
+
+  it("releases the lock when init fails, so a retry can succeed", async () => {
+    const dir = await tmp();
+    const seed = await createStateReplay({ storagePath: dir, lock: false });
+    await seed.setState("job-1", { step: "INIT", status: "PENDING" });
+    await seed.close();
+    await writeFile(join(dir, "events.jsonl"), "{not json at all}\n");
+
+    // Strict replay fails — but must not strand the lockfile.
+    await expect(
+      createStateReplay({ storagePath: dir, tolerantReplay: false }),
+    ).rejects.toThrowError();
+
+    // A tolerant instance can still acquire the same path.
+    const ok = await createStateReplay({ storagePath: dir });
+    expect(ok.ready).toBe(true);
+    await ok.close();
+  });
+
+  it("does not remove a lockfile that another holder recreated", async () => {
+    const dir = await tmp();
+    const a = await createStateReplay({ storagePath: dir });
+    const lockPath = join(dir, "events.jsonl.lock");
+    const ours = await readFile(lockPath, "utf8");
+    expect(JSON.parse(ours).nonce).toBeTypeOf("string");
+
+    // Simulate another process replacing the lock while we hold it.
+    const theirs = JSON.stringify({
+      pid: process.pid,
+      hostname: "other-host",
+      startedAt: Date.now(),
+      nonce: "someone-elses-nonce",
+    });
+    await writeFile(lockPath, theirs);
+
+    await a.close();
+    // close() must leave the other holder's lock intact.
+    expect(await readFile(lockPath, "utf8")).toBe(theirs);
   });
 });

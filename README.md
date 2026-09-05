@@ -110,6 +110,8 @@ const replay = await createStateReplay({
 
 Each line's payload is encrypted with AES-256-GCM. You can pass a raw 32-byte key or a passphrase; a passphrase is stretched with scrypt using a random salt that's generated once and stored in `meta.json`. The salt doesn't need to be secret, so the only thing you actually have to protect is `secretKey`. Switch encryption on without a key and `init` throws `StateReplayConfigError`; point it at an existing log with the wrong key and you get `StateReplayDecryptError`.
 
+The record's `id` and timestamp are authenticated along with the payload, so a ciphertext can't be moved under a different `id` or replayed with a new timestamp — the tag check fails. And once a `secretKey` is configured, a plaintext line in that log is treated as corrupt rather than trusted, so nobody can inject state without the key.
+
 ## Express dashboard
 
 There's a small Express integration under `statereplay/express` for looking at live state. `express` is an optional peer dependency, imported for its types only, so this entry point adds nothing to your runtime if you skip it.
@@ -127,11 +129,11 @@ app.use(createStateReplayMiddleware(replay, { basePath: "/_statereplay", enableD
 | Method | Path | Response |
 |--------|------|----------|
 | GET | `/_statereplay/health` | `getStats()` plus `{ ok, ready }` |
-| GET | `/_statereplay/states` | every id and its current state |
+| GET | `/_statereplay/states` | a page of ids and their current state, plus `total`/`returned` (`?limit`, default 500) |
 | GET | `/_statereplay/states/:id` | one state, or `404` |
 | GET | `/_statereplay/dashboard` | a self-contained HTML page (auto-refreshes every 5s, filter by status) |
 
-One caution: these endpoints hand out your workflow state, so keep them on dev/staging or put them behind auth. They never expose `secretKey`, the raw log, or the lock file, and the dashboard escapes every value before rendering it, but the state itself is yours to guard.
+One caution: these endpoints hand out your workflow state, so keep them on dev/staging or put them behind auth. They never expose `secretKey`, the raw log, or the lock file; the dashboard escapes every value before rendering it, responses are sent `no-store` with `nosniff`, and the page carries a CSP — but the state itself is yours to guard. Note that `/states` serves *decrypted* state, so exposing it publicly defeats at-rest encryption.
 
 ## A fuller example: cross-exchange transfer
 

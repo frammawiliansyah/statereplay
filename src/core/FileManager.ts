@@ -1,16 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { createReadStream, unlinkSync } from "node:fs";
-import {
-  type FileHandle,
-  access,
-  chmod,
-  mkdir,
-  open,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { createReadStream, readFileSync, unlinkSync } from "node:fs";
+import { type FileHandle, access, chmod, mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -86,6 +76,8 @@ export class FileManager {
   private flushing: Promise<void> = Promise.resolve();
   private lockHeld = false;
   private exitHandler?: () => void;
+  /** Identifies the lock record we wrote, so we never remove another holder's. */
+  private lockNonce?: string;
 
   constructor(options: FileManagerOptions) {
     this.storagePath = resolve(options.storagePath);
@@ -305,17 +297,22 @@ export class FileManager {
       createdAt: Date.now(),
       kdfSalt: randomBytes(16).toString("base64"),
     };
+    // kdfSalt is unrecoverable: lose it and every encrypted line is permanently
+    // undecryptable. fsync the contents before anything can be written against it.
+    let fh: FileHandle | undefined;
     try {
-      await writeFile(this.metaPath, `${JSON.stringify(meta)}\n`, {
-        mode: this.fileMode,
-        flag: "wx",
-      });
+      fh = await open(this.metaPath, "wx", this.fileMode);
+      await fh.writeFile(`${JSON.stringify(meta)}\n`);
+      await fh.sync();
     } catch (err) {
       // A concurrent process may have created it first; that is fine.
       if (errnoCode(err) !== "EEXIST") {
         throw err;
       }
+    } finally {
+      await fh?.close();
     }
+    await this.fsyncDir();
     await this.chmodSafe(this.metaPath, this.fileMode);
   }
 
@@ -355,39 +352,71 @@ export class FileManager {
   // --- advisory lock ---------------------------------------------------------
 
   private async tryAcquireLock(allowSteal: boolean): Promise<void> {
+    // A nonce makes the lock *ours* rather than merely present, so a steal can
+    // never delete a lock created after we judged the old one stale, and cleanup
+    // never unlinks a lock some other process now holds.
+    const nonce = randomBytes(16).toString("hex");
     const record = JSON.stringify({
       pid: process.pid,
       hostname: hostname(),
       startedAt: Date.now(),
+      nonce,
     });
     try {
       const fh = await open(this.lockPath, "wx", this.fileMode);
       await fh.writeFile(record);
+      await fh.sync();
       await fh.close();
+      this.lockNonce = nonce;
       return;
     } catch (err) {
       if (errnoCode(err) !== "EEXIST") {
         throw err;
       }
     }
-    if (allowSteal && (await this.lockIsStale())) {
-      await rm(this.lockPath, { force: true });
-      // Steal exactly once: a second EEXIST now means a live race → fail loud.
-      await this.tryAcquireLock(false);
-      return;
+    if (allowSteal) {
+      const snapshot = await this.readLockRaw();
+      if (await this.lockIsStale(snapshot)) {
+        // Re-read and compare: if the record changed since the staleness check,
+        // a live process replaced it and this rm would evict the rightful holder.
+        if ((await this.readLockRaw()) === snapshot) {
+          await rm(this.lockPath, { force: true });
+          // Steal exactly once: a second EEXIST now means a live race → fail loud.
+          await this.tryAcquireLock(false);
+          return;
+        }
+      }
     }
     throw new StateReplayLockError(
       `StateReplay log is locked by another live process: ${this.lockPath}`,
     );
   }
 
-  private async lockIsStale(): Promise<boolean> {
-    let raw: string;
+  private async readLockRaw(): Promise<string | undefined> {
     try {
-      raw = await readFile(this.lockPath, "utf8");
+      return await readFile(this.lockPath, "utf8");
     } catch {
+      return undefined;
+    }
+  }
+
+  /** True when the on-disk lock record is ours — the only case where removing it is safe. */
+  private lockRecordIsOurs(raw: string): boolean {
+    if (this.lockNonce === undefined) {
+      return false;
+    }
+    try {
+      return (JSON.parse(raw) as { nonce?: unknown }).nonce === this.lockNonce;
+    } catch {
+      return false;
+    }
+  }
+
+  private async lockIsStale(snapshot: string | undefined): Promise<boolean> {
+    if (snapshot === undefined) {
       return this.lockOlderThanStale();
     }
+    const raw = snapshot;
     let holder: { pid?: unknown; hostname?: unknown };
     try {
       holder = JSON.parse(raw) as { pid?: unknown; hostname?: unknown };
@@ -421,12 +450,17 @@ export class FileManager {
       return;
     }
     this.exitHandler = () => {
-      if (this.lockHeld) {
-        try {
+      if (!this.lockHeld) {
+        return;
+      }
+      try {
+        // Only unlink a lock still bearing our nonce: on exit it may already
+        // have been stolen and recreated by another process.
+        if (this.lockRecordIsOurs(readFileSync(this.lockPath, "utf8"))) {
           unlinkSync(this.lockPath);
-        } catch {
-          // best-effort
         }
+      } catch {
+        // best-effort
       }
     };
     process.on("exit", this.exitHandler);
@@ -442,10 +476,14 @@ export class FileManager {
       this.exitHandler = undefined;
     }
     try {
-      await rm(this.lockPath, { force: true });
+      const raw = await this.readLockRaw();
+      if (raw !== undefined && this.lockRecordIsOurs(raw)) {
+        await rm(this.lockPath, { force: true });
+      }
     } catch {
       // best-effort
     }
+    this.lockNonce = undefined;
   }
 }
 

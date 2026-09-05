@@ -20,8 +20,16 @@ export interface StateReplayMiddlewareOptions {
   enableDashboard?: boolean;
 }
 
+/** Cap on `/states` so a large log cannot be serialized into one response. */
+const DEFAULT_STATES_LIMIT = 500;
+
 function normalizeBasePath(basePath: string): string {
   return basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
+}
+
+function parseLimit(raw: unknown, fallback: number): number {
+  const n = Number.parseInt(typeof raw === "string" ? raw : "", 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 5000) : fallback;
 }
 
 /**
@@ -45,17 +53,43 @@ export function createStateReplayMiddleware<TData = Record<string, unknown>>(
       return;
     }
     const sub = req.path.slice(basePath.length) || "/";
+    // Guard against a prefix match on a longer sibling route (e.g. basePath
+    // "/_statereplay" must not capture "/_statereplay_admin").
+    if (sub !== "/" && !sub.startsWith("/")) {
+      next();
+      return;
+    }
+
+    // These responses carry live workflow state: never store them.
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
 
     if (sub === "/health") {
       res.json({ ...replay.getStats(), ok: true, ready: replay.ready });
       return;
     }
     if (sub === "/states") {
-      res.json({ states: Object.fromEntries(replay.getAllStates()) });
+      const ids = replay.listIds();
+      const limit = parseLimit(req.query?.limit, DEFAULT_STATES_LIMIT);
+      const page = ids.slice(0, limit);
+      const states: Record<string, unknown> = {};
+      for (const id of page) {
+        states[id] = replay.getState(id);
+      }
+      res.json({ states, total: ids.length, returned: page.length, limit });
       return;
     }
     if (sub.startsWith("/states/")) {
-      const id = decodeURIComponent(sub.slice("/states/".length));
+      const encoded = sub.slice("/states/".length);
+      let id: string;
+      try {
+        id = decodeURIComponent(encoded);
+      } catch {
+        // Malformed percent-escape: decodeURIComponent throws URIError, which in
+        // a sync handler would surface as a 500 with a stack trace.
+        res.status(400).json({ error: "invalid id encoding" });
+        return;
+      }
       const state = replay.getState(id);
       if (state === undefined) {
         res.status(404).json({ id, error: "not found" });
@@ -69,6 +103,10 @@ export function createStateReplayMiddleware<TData = Record<string, unknown>>(
         res.status(404).json({ error: "dashboard disabled" });
         return;
       }
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+      );
       res.type("html").send(DASHBOARD_HTML);
       return;
     }
@@ -123,9 +161,9 @@ export const DASHBOARD_HTML = `<!doctype html>
   var filterEl = document.getElementById("filter");
   var rowsEl = document.getElementById("rows");
   var countEl = document.getElementById("count");
-  var ENT = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+  var ENT = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   function esc(v) {
-    return String(v == null ? "" : v).replace(/[&<>"]/g, function (c) { return ENT[c]; });
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return ENT[c]; });
   }
   function render(states) {
     var filter = filterEl.value;

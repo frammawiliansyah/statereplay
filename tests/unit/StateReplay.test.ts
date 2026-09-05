@@ -72,6 +72,28 @@ describe("StateReplay", () => {
     await sr.close();
   });
 
+  it("rejects non-cloneable data before it reaches the log", async () => {
+    const dir = await tmp();
+    const sr = await openReplay(dir);
+    // JSON.stringify silently drops a function, but structuredClone throws:
+    // rejecting after the durable append would diverge cache from log.
+    await expect(
+      sr.setState("id", {
+        step: "X",
+        status: "PENDING",
+        data: { cb: () => {} } as unknown as JobData,
+      }),
+    ).rejects.toBeInstanceOf(StateReplayValidationError);
+    expect(sr.getState("id")).toBeUndefined();
+    expect(sr.getStats().eventCount).toBe(0);
+    await sr.close();
+
+    // Nothing was persisted either.
+    const reopened = await openReplay(dir);
+    expect(reopened.getState("id")).toBeUndefined();
+    await reopened.close();
+  });
+
   it("throws StateReplayClosedError after close()", async () => {
     const sr = await openReplay(await tmp());
     await sr.close();
