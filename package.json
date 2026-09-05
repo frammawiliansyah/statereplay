@@ -29,9 +29,7 @@
   "types": "./dist/index.d.ts",
   "typesVersions": {
     "*": {
-      "express": [
-        "./dist/express/index.d.ts"
-      ]
+      "express": ["./dist/express/index.d.ts"]
     }
   },
   "exports": {
@@ -56,11 +54,7 @@
       }
     }
   },
-  "files": [
-    "dist",
-    "LICENSE",
-    "README.md"
-  ],
+  "files": ["dist", "LICENSE", "README.md"],
   "engines": {
     "node": ">=18"
   },
